@@ -168,4 +168,84 @@ class LazyLoadingImage:
             img_bytes = base64.b64decode(image_str)
             return Image.open(io.BytesIO(img_bytes))
         
+        def as_base64(self):
+            self._load_img()
+            return self.save_image_as_base64(self._img)
         
+        def as_pillow(self):
+            self._load_img()
+            return self._img
+        
+        def __str__(self):
+            return self.as_base64()
+        
+        def __repr__(self):
+            try:
+                return f"<LazyLoadingImage filepath={self._lazy_filepath} url={self._lazy_url}>"
+            except Exception as e:
+                return f"<LazyLoadingImage RENDER EXCEPTION*(e)>"
+
+        
+class ControlInput(BaseModel):
+    mode: str
+    image: LazyLoadingImage | None = None
+    image_raw: LazyLoadingImage | None = None
+    strength: float = Field(1, ge=0, le=1000)
+    
+    @field_validator("image_raw")
+    def image_raw_validate(cls, v, info: core_schema.FieldValidationInfo):
+        if info.data.get("image") is not None and v is not None:
+            raise ValueError("You cannot specify both image and image_raw")
+
+        return v
+    
+    @field_validator("mode")
+    def mode_validator(cls, v):
+        if v not in config.CONTROL_CONFIG_SHORTCUTS:
+            valid_modes = list(config.CONTROL_CONFIG_SHORTCUTS.keys())
+            valid_modes = ", ".join(valid_modes)
+            msg = f"Invalid controlnet mode: '{v}'. Valid modes are: {valid_modes}"
+            raise ValueError(msg)
+        return v
+    
+class WeightedPrompt(BaseModel):
+    text: str
+    weight: float = Field(1, ge=0)
+    
+    def __repr__(self):
+        return f"{self.weight}*({self.text})"
+
+class MaskMode(str, Enum):
+    REPLACE = "replace"
+    KEEP = "keep"
+    
+MaskInput = MaskMode | str
+PromptInput = str | WeightedPrompt | list[WeightedPrompt] | list[str] | None
+InpaintMethod = Literal["finetune", "control"]
+
+class ImagePrompt(BaseModel, protected_namespace=()):
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    
+    prompt: List[WeightedPrompt] = Field(default=None, validate_default=True)
+    
+    negative_prompt: List[WeightedPrompt] = Field(
+        default_factory=list, validate_default=True
+    )
+    
+    prompt_strength: float = Field(default=7.5, le=50, ge=-50, validate_default=True)
+    
+    init_image: LazyLoadingImage | None = Field(
+        None, description="base64 encoded image", validate_default=True
+    )
+    
+    init_image_strength: float | None = Field(
+        ge=0, le=1, default=None, validate_default=True
+    )
+    
+    image_prompt: List[LazyLoadingImage] | None = Field(None, validate_default=True)
+    
+    image_prompt_strength: float = Field(ge=0, le=1, default=0.0)
+    
+    control_inputs: List[ControlInput] = Field(
+        default_factory=list, validate_default=True
+    )
